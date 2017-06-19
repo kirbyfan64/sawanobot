@@ -237,6 +237,39 @@ class SawanoBotCommands:
             await self.bot.say('\n'.join(message))
 
     @safe_command
+    async def track(self, *args):
+        '''
+        Prints information on the given track.
+
+        Example usage:
+
+        Show information about Barricades:
+        $track barricades
+
+        Show information about all tracks beginning with UNI:
+        $track UNI
+
+        Note that `$track name` is shorthand for `$query track name~name`
+        '''
+        self.logger.info(f'track {args}')
+
+        if len(args) != 1:
+            self.logger.info('track: bad args!')
+            await self.bot.say(
+                f'WTH are you doing; this needs a track to search for')
+            return
+        name = args[0]
+
+        query = Query('track', [QueryPart(Kind.TRACK, Op.MATCHES, name)])
+
+        results = await self.run_query(query)
+        if results is None:
+            self.logger.error('Query run failed!')
+            return
+
+        await self.show_query_results(query, results)
+
+    @safe_command
     async def query(self, *query):
         '''
         Queries for information on a Sawano album or track.
