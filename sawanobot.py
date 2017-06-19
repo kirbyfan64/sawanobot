@@ -5,11 +5,11 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 from logbook import RotatingFileHandler, StreamHandler, Logger
+from recordclass import recordclass
 from discord.ext import commands
 import discord, tatsu
 
 import asyncio, enum, functools, os, re, sqlite3, sys, traceback, yaml
-from collections import namedtuple
 from pathlib import Path
 
 
@@ -21,8 +21,8 @@ value =  { /[^:]/ }+ ;
 '''
 
 
-QueryPart = namedtuple('QueryPart', ['kind', 'op', 'value'])
-Query = namedtuple('Query', ['what', 'items'])
+QueryPart = recordclass('QueryPart', ['kind', 'op', 'value'])
+Query = recordclass('Query', ['what', 'items'])
 
 
 class Kind(enum.Enum):
@@ -43,8 +43,11 @@ def loadfile(path):
         return yaml.load(f)
 
 
-def like_escape(s):
-    return re.sub(r'([\\_%])', r'\\\1', s)
+def like_escape(value):
+    if isinstance(value, str):
+        return re.sub(r'([\\_%])', r'\\\1', value)
+    else:
+        return value
 
 
 class Config:
@@ -144,8 +147,18 @@ class SawanoBotCommands:
                 self.logger.error(f'FailedParse {str(ex)}')
                 return
             else:
-                items.append(QueryPart(Kind(kind), Op(op),
-                                       ''.join(value).replace('+', ' ')))
+                part = QueryPart(Kind(kind), Op(op),
+                                 ''.join(value).replace('+', ' '))
+
+                if part.kind == Kind.ALBUM_ID:
+                    try:
+                        part.value = int(part.value)
+                    except ValueError:
+                        await self.bot.say(
+                            f"{part.value} isn't a valid album id")
+                        self.logger.error(f'Bad integer {part.value}')
+
+                items.append(part)
 
         return Query(what, items)
 
@@ -154,7 +167,10 @@ class SawanoBotCommands:
 
         where = []
         for item in query.items:
-            where.append(f'{item.kind.value} like ?')
+            if isinstance(item.value, str):
+                where.append(f'{item.kind.value} like ?')
+            else:
+                where.append(f'{item.kind.value} == ?')
 
         if query.what == 'track':
             table = 'tracks'
