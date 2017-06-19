@@ -4,12 +4,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from logbook import RotatingFileHandler, StreamHandler, Logger
 from recordclass import recordclass
-from discord.ext import commands
-import discord, tatsu
+import tatsu
 
-import asyncio, enum, functools, os, re, sqlite3, sys, traceback, yaml
+import zdiscord
+
+import asyncio, enum, os, re, sqlite3, sys, yaml
 from pathlib import Path
 
 
@@ -38,11 +38,6 @@ class Op(enum.Enum):
     MATCHES = '~'
 
 
-def loadfile(path):
-    with Path(path).open() as f:
-        return yaml.load(f)
-
-
 def like_escape(value):
     if isinstance(value, str):
         return re.sub(r'([\\_%])', r'\\\1', value)
@@ -50,16 +45,8 @@ def like_escape(value):
         return value
 
 
-class Config:
-    def __init__(self, path='~/.sawanobot.yml'):
-        self.path = os.path.expanduser(path)
-        self.data = loadfile(self.path)
-
-    @property
-    def token(self): return self.data['token']
-
-    @property
-    def logfile(self): return self.data['logfile']
+class Config(zdiscord.Config):
+    DEFAULT_PATH = '~/.sawanobot.yml'
 
 
 class Database:
@@ -73,11 +60,11 @@ class Database:
                                  'vocal text, lyricist text, lyrics text)')
 
     def load(self, data_dir):
-        all = loadfile(data_dir / 'all.yml')
+        all = zdiscord.loadfile(data_dir / 'all.yml')
         album_files = all['albums']
 
         for album_file in album_files:
-            album_data = loadfile(data_dir / f'{album_file}.yml')
+            album_data = zdiscord.loadfile(data_dir / f'{album_file}.yml')
             self.cursor.execute('INSERT INTO albums VALUES (?, ?, ?)',
                                 (album_file, album_data['name'],
                                  album_data['id']))
@@ -99,40 +86,12 @@ class Database:
         self.conn.commit()
 
 
-def safe_command(func):
-    @functools.wraps(func)
-    async def wrapper(self, *args):
-        try:
-            return await func(self, *args)
-        except Exception as ex:
-            self.logger.error(f'Fatal error inside {func.__name__}!!!!')
-            self.logger.error(traceback.format_exc())
-            self.logger.error(str(ex))
-
-            await self.bot.say(f'''
-*BOOOOOOOM*
-
-Unfortunately, SawanoBot crashed while running your command. After the
-flames and screaming, this info was left behind:
-
-Function where the error occurred: `{func.__name__}`
-
-```
-{traceback.format_exc()}
-```
-
-Sorry! :(
-'''.strip())
-
-    return commands.command(name=func.__name__)(wrapper)
-
-
 class SawanoBotCommands:
     def __init__(self, bot):
         self.bot = bot
+        self.logger = self.bot.logger
         self.db = Database()
         self.db.load(Path(__file__).parent / 'data')
-        self.logger = self.bot.logger
 
     async def parse_query(self, query):
         self.logger.info(f'parse_query {query}')
@@ -236,7 +195,7 @@ class SawanoBotCommands:
 
             await self.bot.say('\n'.join(message))
 
-    @safe_command
+    @zdiscord.safe_command
     async def track(self, *args):
         '''
         Prints information on the given track.
@@ -269,7 +228,7 @@ class SawanoBotCommands:
 
         await self.show_query_results(query, results)
 
-    @safe_command
+    @zdiscord.safe_command
     async def query(self, *query):
         '''
         Queries for information on a Sawano album or track.
@@ -313,33 +272,14 @@ class SawanoBotCommands:
         await self.show_query_results(pquery, results)
 
 
-class SawanoBot(commands.Bot):
-    def __init__(self, config):
-        super(SawanoBot, self).__init__(command_prefix='$')
-        self.config = config
-        self.logger = Logger('sawanobot')
-        self.event(self.on_ready)
-        self.add_cog(SawanoBotCommands(self))
-
-    def run(self):
-        super(SawanoBot, self).run(self.config.token)
-
-    async def on_ready(self):
-        self.logger.info(f'Logged in: {self.user.name} {self.user.id}')
+class SawanoBot(zdiscord.Bot):
+    COMMAND_PREFIX = '$'
+    COMMANDS = SawanoBotCommands
 
 
 def main():
     asyncio.set_event_loop(asyncio.new_event_loop())
-    config = Config()
-
-    stream_handler = StreamHandler(sys.stdout)
-    file_handler = RotatingFileHandler(os.path.expanduser(config.logfile))
-
-    stream_handler.push_application()
-    file_handler.push_application()
-
-    bot = SawanoBot(config)
-    bot.run()
+    zdiscord.main(SawanoBot, Config())
 
 
 if __name__ == '__main__':
