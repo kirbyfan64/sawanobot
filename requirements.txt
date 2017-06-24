@@ -1,1 +1,2 @@
 git+https://github.com/kirbyfan64/zdiscord.git
+plac
