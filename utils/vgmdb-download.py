@@ -40,16 +40,27 @@ def vgmdb_info(url):
 def fill_track_info(notes, tracks, trackmap):
     current_track = None
 
+    searchers = {
+        'Lyrics by ': 'lyricist',
+        'Lyrics: ': 'lyricist',
+        'Vocal by ': 'vocal',
+        'Vocal: ': 'vocal',
+    }
+
     for line in notes.splitlines():
         if line.startswith('M') and line[1].isdigit():
             pos = line[1:line.index(' ')]
             current_track = tracks[trackmap[pos]]
-        elif line.startswith('Lyrics by '):
-            current_track.info['lyricist'] = line[10:].replace(' & ', ', ')\
-                                                      .rstrip('.""')
-        elif line.startswith('Vocal by '):
-            current_track.info['vocal'] = line[9:].replace(' & ', ', ')\
-                                                  .rstrip('.')
+        elif line.startswith('M-') and line[2].isdigit():
+            pos = line[2:line.index(' ')]
+            current_track = tracks[trackmap[f'1-{pos}']]
+        else:
+            for prefix, target in searchers.items():
+                if line.startswith(prefix):
+                    current_track.info[target] = line[len(prefix):] \
+                                                    .replace(' & ', ', ') \
+                                                    .rstrip('.')
+                    break
 
 
 def extract_data(albumid):
@@ -60,7 +71,11 @@ def extract_data(albumid):
 
         for disc_id, disc in enumerate(data['discs']):
             for track_id, track_data in enumerate(disc['tracks']):
-                tracks.append(Track(track_data['names']['Japanese'], {}))
+                names = track_data['names']
+                name = names.get('Japanese') or names.get('Greek')
+                assert name
+
+                tracks.append(Track(name, {}))
                 trackmap[f'{disc_id+1}-{track_id+1:>02}'] = len(tracks)-1
 
         fill_track_info(notes, tracks, trackmap)
