@@ -7,9 +7,6 @@ from urllib import request
 from pathlib import Path
 
 
-assert sys.version_info >= (3, 6), 'This only works on CPython 3.6'
-
-
 this = Path(__file__)
 data_dir = this.parent.parent/'data'
 

@@ -1,16 +1,18 @@
-#!/usr/bin/env python36
-
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from recordclass import recordclass
+import attr
 import tatsu
 
 import zdiscord
 
 import asyncio, enum, os, re, sqlite3, sys, yaml
 from pathlib import Path
+
+from . import Config
+Config.current = Config.BOT
+from .database import BotDatabase
 
 
 QUERY_GRAMMAR = '''
@@ -21,8 +23,17 @@ value =  { /[^:]/ }+ ;
 '''
 
 
-QueryPart = recordclass('QueryPart', ['kind', 'op', 'value'])
-Query = recordclass('Query', ['what', 'items'])
+@attr.s
+class QueryPart:
+    kind = attr.s()
+    op = attr.s()
+    value = attr.s()
+
+
+@attr.s
+class Query:
+    what = attr.s()
+    items = attr.s()
 
 
 class Kind(enum.Enum):
@@ -49,49 +60,11 @@ class Config(zdiscord.Config):
     DEFAULT_PATH = '~/.sawanobot.yml'
 
 
-class Database:
-    def __init__(self):
-        self.conn = sqlite3.connect(':memory:')
-        self.cursor = self.conn.cursor()
-        self.cursor.execute(
-            'CREATE TABLE albums (file text, album text, albumid real)')
-        self.cursor.execute(
-            'CREATE TABLE tracks (track text, album text, albumid real,'
-                                 'vocal text, lyricist text, lyrics text)')
-
-    def load(self, data_dir):
-        all = zdiscord.loadfile(data_dir / 'all.yml')
-        album_files = all['albums']
-
-        for album_file in album_files:
-            album_data = zdiscord.loadfile(data_dir / f'{album_file}.yml')
-            self.cursor.execute('INSERT INTO albums VALUES (?, ?, ?)',
-                                (album_file, album_data['name'],
-                                 album_data['id']))
-
-            for track in album_data['tracks']:
-                if isinstance(track, str):
-                    track_data = {}
-                elif isinstance(track, dict):
-                    track, track_data = list(track.items())[0]
-                else:
-                    assert 0, f'Bad track type {type(track)}'
-
-                self.cursor.execute(
-                    'INSERT INTO tracks VALUES (?, ?, ?, ?, ?, ?)',
-                    (track, album_data['name'], album_data['id'],
-                     track_data.get('vocal'), track_data.get('lyricist'),
-                     track_data.get('lyrics')))
-
-        self.conn.commit()
-
-
 class SawanoBotCommands:
     def __init__(self, bot):
         self.bot = bot
         self.logger = self.bot.logger
-        self.db = Database()
-        self.db.load(Path(__file__).parent / 'data')
+        self.db = BotDatabase()
 
     async def parse_query(self, query):
         self.logger.info(f'parse_query {query}')
@@ -208,7 +181,7 @@ class SawanoBotCommands:
         Show information about all tracks beginning with UNI:
         $track UNI
 
-        Note that `$track name` is shorthand for `$query track name~name`
+        Note that `$track name` is shorthand for `$query track name~name`.
         '''
         self.logger.info(f'track {args}')
 
