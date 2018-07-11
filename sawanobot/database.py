@@ -8,7 +8,7 @@ from . import Config
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-from sqlalchemy import ARRAY, Column, ForeignKey, Integer, String
+from sqlalchemy import ARRAY, Boolean, Column, DateTime, ForeignKey, Integer, String
 
 import os
 
@@ -31,10 +31,12 @@ if Config.current is Config.BOT:
     class BotDatabase(Database):
         def __init__(self):
             engine = sqlalchemy.create_engine(self.url)
-            Model.metadata.create_all(engine)
+            Model.metadata.create_all()
             self.session = sqlalchemy.orm.sessionmaker(bind=engine)
 else:
+    from flask_security import SQLAlchemyUserDatastore, UserMixin, RoleMixin
     from flask_sqlalchemy import SQLAlchemy
+    import sqlalchemy
 
     db = SQLAlchemy()
     Model = db.Model
@@ -44,16 +46,57 @@ else:
             app.config['SQLALCHEMY_DATABASE_URI'] = self.url
             db.init_app(app)
 
+        def initialize(self):
+            db.create_all()
+
+            self.user_role = Role.query.filter_by(name='user').first()
+            if self.user_role is None:
+                self.user_role = Role(name='user')
+                db.session.add(self.user_role)
+
+            self.superuser_role = Role.query.filter_by(name='superuser').first()
+            if self.superuser_role is None:
+                self.superuser_role = Role(name='superuser')
+                db.session.add(self.superuser_role)
+
+            db.session.commit()
+
         @property
         def session(self):
             return db.session
 
 
-class Album(Model):
-    __tablename__ = 'albums'
+    roles_users = db.Table('roles_users',
+                           db.Column('user_id', db.Integer(), db.ForeignKey('user.id')),
+                           db.Column('role_id', db.Integer(), db.ForeignKey('role.id')))
 
-    id = Column(String, primary_key=True, nullable=False)
-    name = Column(String, nullable=False)
+    class Role(Model, RoleMixin):
+        id = Column(Integer(), primary_key=True)
+        name = Column(String(80), unique=True)
+        description = Column(String(255))
+
+        def __str__(self):
+            return self.name
+
+    class User(Model, UserMixin):
+        id = Column(Integer, primary_key=True)
+        email = Column(String(255), unique=True)
+        password = Column(String(255))
+        active = Column(Boolean())
+        confirmed_at = Column(DateTime())
+        roles = db.relationship('Role', secondary=roles_users,
+                                backref=db.backref('users', lazy='dynamic'))
+
+        def __str__(self):
+            return self.email
+
+    user_datastore = SQLAlchemyUserDatastore(db, User, Role)
+
+    class Album(Model):
+        __tablename__ = 'albums'
+
+        id = Column(String, primary_key=True, nullable=False)
+        name = Column(String, nullable=False, unique=True)
 
 
 class Track(Model):
@@ -62,7 +105,7 @@ class Track(Model):
     album_id = Column(String, ForeignKey('albums.id'), primary_key=True)
     disc = Column(Integer, primary_key=True, nullable=False)
     track = Column(Integer, primary_key=True, nullable=False)
-    name = Column(String, nullable=False)
+    name = Column(String, nullable=False, unique=True)
     lyrics = Column(String)
     lyricists = Column(ARRAY(String))
     vocalists = Column(ARRAY(String))
