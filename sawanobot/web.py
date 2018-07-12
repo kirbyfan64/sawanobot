@@ -4,12 +4,14 @@
 
 
 from flask import Flask, redirect, request, url_for
-from flask_admin import Admin, BaseView, helpers
+from flask_admin import Admin, BaseView, expose, helpers
 from flask_admin.contrib.sqla import ModelView
 from flask_mail import Mail
 from flask_security import Security, current_user
 from flask_security.utils import encrypt_password
-from wtforms import TextAreaField, StringField
+from wtforms import Form, StringField, SubmitField, TextAreaField, ValidationError
+
+from . import vgmdb
 
 from . import Config
 Config.current = Config.WEB
@@ -37,6 +39,15 @@ class TallTextAreaField(TextAreaField):
         super(TallTextAreaField, self).__init__(render_kw={'rows': 20}, *args, **kw)
 
 
+class ImportForm(Form):
+    album_url = StringField('VGMdb album URL')
+    submit = SubmitField('Import')
+
+    def validate_album_url(form, field):
+        if vgmdb.extract_album_id(field.data) is None:
+            raise ValidationError('Invalid album URL')
+
+
 class SecurityRedirectView(BaseView):
     def __init__(self, name, endpoint, *, logged_in):
         self.logged_in = logged_in
@@ -56,12 +67,8 @@ class SecurityRedirectView(BaseView):
         return self.logged_in == is_logged_in
 
 
-class CustomModelView(ModelView):
+class ViewAuthMixin:
     column_display_pk = True
-
-    def __init__(self, model, session, *, superuser):
-        self.superuser = superuser
-        super(CustomModelView, self).__init__(model, session)
 
     def is_accessible(self):
         if not current_user.is_active or not current_user.is_authenticated:
@@ -81,7 +88,23 @@ class CustomModelView(ModelView):
                 return redirect(url_for('security.login', next=request.url))
 
 
-class DataModelView(CustomModelView):
+class ImportView(BaseView, ViewAuthMixin):
+    def __init__(self):
+        super(ImportView, self).__init__(name='VGMdb Import', endpoint='import')
+
+    @expose('/', methods=('GET', 'POST'))
+    def index(self):
+        album_url = request.args.get('album_url')
+        if album_url is not None:
+            return album_url
+        else:
+            form = ImportForm(request.form)
+            if request.method == 'POST' and form.validate():
+                return redirect(url_for('.index', album_url=form.album_url.data))
+            return self.render('import.html', form=form)
+
+
+class DataModelView(ModelView, ViewAuthMixin):
     column_labels = {'catalog': 'Catalog number', 'vgmdb_id': 'VGMdb id',
                      'id': 'Unique ID'}
     form_overrides = {'composer': DefaultComposerField, 'lyrics': TallTextAreaField}
@@ -92,17 +115,19 @@ class DataModelView(CustomModelView):
         for column in table.c:
             self.form_columns.append(column.name)
 
-        super(DataModelView, self).__init__(model, session, superuser=False)
+        super(DataModelView, self).__init__(model, session)
+        self.superuser = False
 
 
-class RestrictedModelView(CustomModelView):
+class RestrictedModelView(ModelView, ViewAuthMixin):
     def __init__(self, model, session, *, exclude=None):
         if exclude is not None:
             self.column_exclude_list = exclude
 
         self.form_overrides = {'password': DefaultPasswordField}
 
-        super(RestrictedModelView, self).__init__(model, session, superuser=True)
+        super(RestrictedModelView, self).__init__(model, session)
+        self.superuser = True
 
 
 app = Flask('sawanobot')
@@ -144,6 +169,7 @@ admin.add_view(DataModelView(Album, db.session))
 admin.add_view(DataModelView(Track, db.session))
 admin.add_view(RestrictedModelView(Role, db.session))
 admin.add_view(RestrictedModelView(User, db.session, exclude=['password']))
+admin.add_view(ImportView())
 admin.add_view(SecurityRedirectView('Log in', 'login', logged_in=False))
 admin.add_view(SecurityRedirectView('Log out', 'logout', logged_in=True))
 admin.add_view(SecurityRedirectView('Change password', 'change_password',

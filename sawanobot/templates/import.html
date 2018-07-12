@@ -1,0 +1,15 @@
+{% extends 'admin/master.html' %}
+{% from "security/_macros.html" import render_field, render_field_with_errors %}
+{% block body %}
+<div class="row-fluid">
+  <div class="col-sm-8 col-sm-offset-2">
+    <h1>VGMdb Import</h1>
+    <div class="well">
+      <form action="{{ url_for('import.index') }}" method="POST">
+        {{ render_field_with_errors(form.album_url) }}
+        {{ render_field(form.submit, class="btn btn-primary") }}
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
