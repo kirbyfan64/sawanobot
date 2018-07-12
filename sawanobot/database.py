@@ -100,6 +100,7 @@ class Album(Model):
     catalog = Column(String, primary_key=True, nullable=False)
     vgmdb_id = Column(String, nullable=False, unique=True)
     name = Column(String, nullable=False, unique=True)
+    notes = Column(String)
 
 
 class Track(Model):
@@ -109,6 +110,7 @@ class Track(Model):
     disc = Column(Integer, primary_key=True, nullable=False)
     track = Column(Integer, primary_key=True, nullable=False)
     name = Column(String, nullable=False, unique=True)
+    meaning = Column(String)
     composer = Column(String, nullable=False)
     vocalists = Column(ARRAY(String))
     lyricists = Column(ARRAY(String))

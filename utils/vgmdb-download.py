@@ -34,6 +34,13 @@ def vgmdb_info(url):
         yield json.load(resp)
 
 
+def upto(string, character):
+    if character in string:
+        return string[:string.index(character)]
+    else:
+        return string
+
+
 def fill_track_info(notes, tracks, trackmap):
     current_track = None
 
@@ -46,10 +53,10 @@ def fill_track_info(notes, tracks, trackmap):
 
     for line in notes.splitlines():
         if line.startswith('M') and line[1].isdigit():
-            pos = line[1:line.index(' ')]
+            pos = upto(line, ' ')[1:]
             current_track = tracks[trackmap[pos]]
         elif line.startswith('M-') and line[2].isdigit():
-            pos = line[2:line.index(' ')]
+            pos = upto(line, ' ')[2:]
             current_track = tracks[trackmap[f'1-{pos}']]
         else:
             for prefix, target in searchers.items():
@@ -61,6 +68,8 @@ def fill_track_info(notes, tracks, trackmap):
 
 
 def extract_data(albumid):
+    LANGUAGES = 'Japanese', 'Greek', 'English'
+
     with vgmdb_info(f'album/{albumid}') as data:
         trackmap = {}
         tracks = []
@@ -69,10 +78,20 @@ def extract_data(albumid):
         for disc_id, disc in enumerate(data['discs']):
             for track_id, track_data in enumerate(disc['tracks']):
                 names = track_data['names']
+                meaning = None
+
                 name = names.get('Japanese') or names.get('Greek')
-                assert name
+                if name is not None:
+                    meaning = names.get('English')
+                else:
+                    name = names.get('English')
+
+                assert name, track_data
 
                 tracks.append(Track(name, {}))
+                if meaning is not None:
+                    tracks[-1]['meaning'] = meaning
+
                 trackmap[f'{disc_id+1}-{track_id+1:>02}'] = len(tracks)-1
 
         fill_track_info(notes, tracks, trackmap)
@@ -102,7 +121,8 @@ def write_album_info(data, target):
 def main(albumid: 'The VGMdb album ID',
          target: 'The target file name, to be saved in ../data/{target}.yml'):
     data = extract_data(albumid)
-    write_album_info(data, target)
+    print(data)
+    # write_album_info(data, target)
 
 
 if __name__ == '__main__':
