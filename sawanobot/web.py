@@ -14,7 +14,7 @@ from wtforms import TextAreaField, StringField
 from . import Config
 Config.current = Config.WEB
 
-from .database import Album, Track, Role, User, WebDatabase, user_datastore
+from .database import Album, Track, Role, User, WebDatabase, migrate, user_datastore
 
 import os
 
@@ -121,9 +121,9 @@ app.config['SECURITY_CHANGEABLE'] = True
 
 app.secret_key = app.config['SECRET_KEY']
 
-
 mail = Mail(app)
 
+migrate.init_app(app)
 
 security = Security(app, user_datastore)
 
@@ -165,5 +165,3 @@ with app.app_context():
             roles=[db.user_role, db.superuser_role],
         )
         db.session.commit()
-
-app.run()

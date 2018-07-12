@@ -34,11 +34,13 @@ if Config.current is Config.BOT:
             Model.metadata.create_all()
             self.session = sqlalchemy.orm.sessionmaker(bind=engine)
 else:
+    from flask_migrate import Migrate
     from flask_security import SQLAlchemyUserDatastore, UserMixin, RoleMixin
     from flask_sqlalchemy import SQLAlchemy
     import sqlalchemy
 
     db = SQLAlchemy()
+    migrate = Migrate(db=db)
     Model = db.Model
 
     class WebDatabase(Database):
