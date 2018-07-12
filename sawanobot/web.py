@@ -19,6 +19,12 @@ from .database import Album, Track, Role, User, WebDatabase, user_datastore
 import os
 
 
+class DefaultComposerField(StringField):
+    def __init__(self, *args, **kw):
+        super(DefaultField, self).__init__(default=app.config['DEFAULT_COMPOSER'],
+                                           *args, **kw)
+
+
 class DefaultPasswordField(StringField):
     def __init__(self, *args, **kw):
         super(DefaultPasswordField, self).__init__(
@@ -76,13 +82,15 @@ class CustomModelView(ModelView):
 
 
 class DataModelView(CustomModelView):
+    column_labels = {'catalog': 'Catalog number', 'vgmdb_id': 'VGMdb id',
+                     'id': 'Unique ID'}
+    form_overrides = {'composer': DefaultComposerField, 'lyrics': TallTextAreaField}
+
     def __init__(self, model, session):
         table = model.metadata.tables[model.__tablename__]
         self.form_columns = []
         for column in table.c:
             self.form_columns.append(column.name)
-
-        self.form_overrides = {'lyrics': TallTextAreaField}
 
         super(DataModelView, self).__init__(model, session, superuser=False)
 
@@ -102,6 +110,7 @@ app.config.from_object('local_config')
 app.config['FLASK_ADMIN_SWATCH'] = 'cosmo'
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SECURITY_CHANGEABLE'] = True
+# app.config['DEFAULT_COMPOSER'] = local_config
 # app.config['SECURITY_PASSWORD_SALT'] = local_config
 # app.config['SECURITY_CONFIRMABLE'] = True
 # app.config['SECURITY_RECOVERABLE'] = True
@@ -109,6 +118,7 @@ app.config['SECURITY_CHANGEABLE'] = True
 # app.config['ADMIN_EMAIL'] = local_config
 # app.config['ADMIN_PASSWORD'] = local_config
 # app.config['SECRET_KEY'] = local_config
+
 app.secret_key = app.config['SECRET_KEY']
 
 

@@ -92,20 +92,23 @@ else:
 
     user_datastore = SQLAlchemyUserDatastore(db, User, Role)
 
-    class Album(Model):
-        __tablename__ = 'albums'
+class Album(Model):
+    __tablename__ = 'albums'
 
-        id = Column(String, primary_key=True, nullable=False)
-        name = Column(String, nullable=False, unique=True)
+    catalog = Column(String, primary_key=True, nullable=False)
+    vgmdb_id = Column(String, nullable=False, unique=True)
+    name = Column(String, nullable=False, unique=True)
 
 
 class Track(Model):
     __tablename__ = 'tracks'
 
-    album_id = Column(String, ForeignKey('albums.id'), primary_key=True)
+    catalog = Column(String, ForeignKey('albums.catalog'), primary_key=True)
     disc = Column(Integer, primary_key=True, nullable=False)
     track = Column(Integer, primary_key=True, nullable=False)
     name = Column(String, nullable=False, unique=True)
-    lyrics = Column(String)
-    lyricists = Column(ARRAY(String))
+    composer = Column(String, nullable=False)
     vocalists = Column(ARRAY(String))
+    lyricists = Column(ARRAY(String))
+    lyrics = Column(String)
+    info = Column(String)
