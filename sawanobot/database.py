@@ -18,6 +18,23 @@ class Database:
     def url(self):
         return 'postgresql://postgres@localhost/sawanobot'
 
+    def add_album_and_tracks(self, album, tracks):
+        old_album = self.session.query(Album).filter_by(catalog=album.catalog).first()
+        if old_album is not None:
+            self.session.merge(album)
+        else:
+            self.session.add(album)
+        self.session.commit()
+
+        track_map = {(track.disc, track.track): track for track in tracks}
+
+        present_tracks = self.session.query(Track).filter_by(catalog=album.catalog).all()
+        for present_track in present_tracks:
+            self.session.merge(track_map.pop((present_track.disc, present_track.track)))
+
+        self.session.add_all(track_map.values())
+        self.session.commit()
+
 
 assert Config.current is not None
 
@@ -110,6 +127,7 @@ class Track(Model):
     disc = Column(Integer, primary_key=True, nullable=False)
     track = Column(Integer, primary_key=True, nullable=False)
     name = Column(String, nullable=False, unique=True)
+    length = Column(Integer, nullable=False)
     meaning = Column(String)
     composer = Column(String, nullable=False)
     vocalists = Column(ARRAY(String))

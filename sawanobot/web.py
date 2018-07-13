@@ -3,28 +3,31 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
-from flask import Flask, redirect, request, url_for
+from flask import Flask, Markup, redirect, request, session, url_for
 from flask_admin import Admin, BaseView, expose, helpers
+from flask_admin.model.template import macro
 from flask_admin.contrib.sqla import ModelView
+from flask_admin.contrib.sqla.filters import BaseSQLAFilter
 from flask_mail import Mail
 from flask_security import Security, current_user
 from flask_security.utils import encrypt_password
+from flask_session import Session
 from wtforms import Form, StringField, SubmitField, TextAreaField, ValidationError
 
-from . import vgmdb
 
 from . import Config
 Config.current = Config.WEB
 
 from .database import Album, Track, Role, User, WebDatabase, migrate, user_datastore
+from . import vgmdb
 
 import os
 
 
 class DefaultComposerField(StringField):
     def __init__(self, *args, **kw):
-        super(DefaultField, self).__init__(default=app.config['DEFAULT_COMPOSER'],
-                                           *args, **kw)
+        super(DefaultComposerField, self).__init__(
+            default=app.config['DEFAULT_COMPOSER'], *args, **kw)
 
 
 class DefaultPasswordField(StringField):
@@ -46,6 +49,10 @@ class ImportForm(Form):
     def validate_album_url(form, field):
         if vgmdb.extract_album_id(field.data) is None:
             raise ValidationError('Invalid album URL')
+
+
+class ImportConfirmForm(Form):
+    submit = SubmitField('Import')
 
 
 class SecurityRedirectView(BaseView):
@@ -96,7 +103,26 @@ class ImportView(BaseView, ViewAuthMixin):
     def index(self):
         album_url = request.args.get('album_url')
         if album_url is not None:
-            return album_url
+            session_key = f'vgmdb-import-{album_url}'
+            form = ImportConfirmForm(request.form)
+
+            if request.method == 'POST':
+                if session_key in session:
+                    album, tracks = session[session_key]
+                    db.add_album_and_tracks(album, tracks)
+                    return redirect(url_for('album.edit_view', id=album.catalog))
+                else:
+                    abort(400)
+
+            album_id = vgmdb.extract_album_id(album_url)
+            if album_id is None:
+                abort(400)
+
+            album, tracks = vgmdb.extract_album_and_tracks(album_id)
+            session[session_key] = (album, tracks)
+
+            return self.render('import_results.html', album=album, tracks=tracks,
+                               form=form, album_url=album_url)
         else:
             form = ImportForm(request.form)
             if request.method == 'POST' and form.validate():
@@ -104,19 +130,54 @@ class ImportView(BaseView, ViewAuthMixin):
             return self.render('import.html', form=form)
 
 
+def format_length(view, context, model, column):
+    return f'{model.length // 60:>02}:{model.length % 60:>02}'
+
+
 class DataModelView(ModelView, ViewAuthMixin):
+    column_exclude_list = ('notes', 'lyrics', 'info')
+    column_formatters = {'catalog': macro('format_filters'),
+                         'composer': macro('format_filters'),
+                         'disc': macro('format_filters'),
+                         'length': format_length}
     column_labels = {'catalog': 'Catalog number', 'vgmdb_id': 'VGMdb id',
                      'id': 'Unique ID'}
     form_overrides = {'composer': DefaultComposerField, 'lyrics': TallTextAreaField}
+    list_template = 'admin/list_filtered.html'
 
     def __init__(self, model, session):
         table = model.metadata.tables[model.__tablename__]
+        self.column_list = []
         self.form_columns = []
         for column in table.c:
+            self.column_list.append(column.name)
             self.form_columns.append(column.name)
 
         super(DataModelView, self).__init__(model, session)
         self.superuser = False
+
+    def get_request_filters(self):
+        return {key: value for key, value in request.args.items()
+                           if key in self.column_list}
+
+    def get_filtered_query(self, query):
+        filters = self.get_request_filters()
+        if filters:
+            return query.filter_by(**filters)
+        else:
+            return query
+
+    def get_query(self):
+        return self.get_filtered_query(super(DataModelView, self).get_query())
+
+    def get_count_query(self):
+        return self.get_filtered_query(super(DataModelView, self).get_count_query())
+
+    def render(self, template, **kw):
+        filters = self.get_request_filters()
+        return super(DataModelView, self).render(template,
+                                                 column_labels=self.column_labels,
+                                                 request_filters=filters, **kw)
 
 
 class RestrictedModelView(ModelView, ViewAuthMixin):
@@ -131,6 +192,7 @@ class RestrictedModelView(ModelView, ViewAuthMixin):
 
 
 app = Flask('sawanobot')
+app.jinja_env.add_extension('jinja2.ext.do')
 app.config.from_object('local_config')
 app.config['FLASK_ADMIN_SWATCH'] = 'cosmo'
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -146,7 +208,9 @@ app.config['SECURITY_CHANGEABLE'] = True
 
 app.secret_key = app.config['SECRET_KEY']
 
-mail = Mail(app)
+
+Mail(app)
+Session(app)
 
 migrate.init_app(app)
 
@@ -183,6 +247,7 @@ def index():
 
 with app.app_context():
     db.initialize()
+    db.session.commit()
 
     if User.query.filter_by(email=app.config['ADMIN_EMAIL']).first() is None:
         user_datastore.create_user(

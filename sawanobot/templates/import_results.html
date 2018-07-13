@@ -1,0 +1,75 @@
+{% extends 'admin/master.html' %}
+{% from "security/_macros.html" import render_field, render_field_with_errors %}
+{% block body %}
+<div class="row-fluid">
+  <div class="col-sm-8 col-sm-offset-2">
+    <h1>VGMdb Import</h1>
+    <div class="well">
+      <table class="table table-bordered table-hover">
+        <tbody>
+          <tr>
+            <td>Catalog</td>
+            <td>{{ album.catalog }}</td>
+          </tr>
+          <tr>
+            <td>VGMdb ID</td>
+            <td>{{ album.vgmdb_id }}</td>
+          </tr>
+          <tr>
+            <td>Name</td>
+            <td>{{ album.name }}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>Tracks</h2>
+
+      <table class="table table-bordered table-hover">
+        <tbody>
+          {% for track in tracks %}
+            <tr>
+              <td>Disc</td>
+              <td>{{ track.disc }}</td>
+            </tr>
+            <tr>
+              <td>Track</td>
+              <td>{{ track.track }}</td>
+            </tr>
+            <tr>
+              <td>Name</td>
+              <td>{{ track.name }}</td>
+            </tr>
+            <tr>
+              <td>Length</td>
+              <td>{{ '{:02}:{:02}'.format(track.length // 60, track.length % 60) }}</td>
+            </tr>
+            <tr>
+              <td>Meaning</td>
+              <td>{{ track.meaning }}</td>
+            </tr>
+            <tr>
+              <td>Composer</td>
+              <td>{{ track.composer }}</td>
+            </tr>
+            <tr>
+              <td>Vocalists</td>
+              <td>{{ ','.join(track.vocalists or ['None']) }}</td>
+            </tr>
+            <tr>
+              <td>Lyricists</td>
+              <td>{{ ','.join(track.lyricists or ['None']) }}</td>
+            </tr>
+            <tr style="height: 2em">
+              <td colspan="2"></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <form action="{{ url_for('import.index', album_url=album_url) }}" method="POST">
+        {{ render_field(form.submit, class="btn btn-primary") }}
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,51 @@
+{% extends 'admin/model/list.html' %}
+
+{% macro format_filters(model, column) %}
+  {% set id = '{}-{}-{}'.format(model.catalog, model.disc, model.track) %}
+  {% set args = request.args.copy() %}
+  {% set value = model[column] %}
+  {% do args.pop(column, None) %}
+  {% do args.update({column: value}) %}
+  {% if column == 'catalog' %}
+    <button class="btn btn-link dropdown-toggle" data-toggle="dropdown" id="{{ id }}"
+       style="padding: 0">
+      {{ value }}
+      <span class="caret"></span>
+    </button>
+    <ul class="dropdown-menu" aria-labelledby="{{ id }}"
+        style="top: unset; left: unset;">
+      <li><a href="{{ url_for('album.index_view', **args) }}">Album</a></li>
+      <li><a href="{{ url_for('track.index_view', **args) }}">Tracks</a></li>
+    </ul>
+  {% else %}
+    <a class="btn btn-link" href="{{ url_for('.index_view', **args) }}" role="button"
+       style="padding: 0">
+      {{ value }}
+    </a>
+  {% endif %}
+{% endmacro %}
+
+{% block body %}
+{% if request_filters %}
+  <div style="width: 50%; margin: auto;">
+    <h3 style="text-align: center">Active filters:</h3>
+
+    <ul>
+      <table class="table table-bordered table-hover">
+        <tbody>
+          {% for key, value in request_filters.items() %}
+            {% set args = request.args.copy() %}
+            {% do args.pop(key) %}
+            <tr>
+              <td>{{ column_labels.get(key, key) }}</td>
+              <td>{{ value }}</td>
+              <td> <a href="{{ url_for(request.endpoint, **args) }}">Clear</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </ul>
+  </div>
+{% endif %}
+{{ super() }}
+{% endblock %}
