@@ -48,8 +48,8 @@ if Config.current is Config.BOT:
     class BotDatabase(Database):
         def __init__(self):
             engine = sqlalchemy.create_engine(self.url)
-            Model.metadata.create_all()
-            self.session = sqlalchemy.orm.sessionmaker(bind=engine)
+            Model.metadata.create_all(engine)
+            self.session = sqlalchemy.orm.sessionmaker(bind=engine)()
 else:
     from flask_migrate import Migrate
     from flask_security import SQLAlchemyUserDatastore, UserMixin, RoleMixin
@@ -111,6 +111,7 @@ else:
 
     user_datastore = SQLAlchemyUserDatastore(db, User, Role)
 
+
 class Album(Model):
     __tablename__ = 'albums'
 
@@ -134,3 +135,7 @@ class Track(Model):
     lyricists = Column(ARRAY(String))
     lyrics = Column(String)
     info = Column(String)
+
+
+def model_table(model):
+    return model.metadata.tables[model.__tablename__]

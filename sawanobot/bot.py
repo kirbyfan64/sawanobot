@@ -2,7 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import attr
 import tatsu
 
 import zdiscord
@@ -12,48 +11,20 @@ from pathlib import Path
 
 from . import Config
 Config.current = Config.BOT
-from .database import BotDatabase
+from .database import BotDatabase, Model, Album, Track, model_table
 
 
 QUERY_GRAMMAR = '''
 start = kind op value $ ;
-kind = 'vocal' | 'lyricist' | 'album' | 'albumid' | 'track' ;
+kind = 'catalog' | 'name' ;
 op = '=' | '~' ;
 value =  { /[^:]/ }+ ;
 '''
 
 
-@attr.s
-class QueryPart:
-    kind = attr.s()
-    op = attr.s()
-    value = attr.s()
-
-
-@attr.s
-class Query:
-    what = attr.s()
-    items = attr.s()
-
-
-class Kind(enum.Enum):
-    VOCAL = 'vocal'
-    LYRICIST = 'lyricist'
-    ALBUM = 'album'
-    ALBUM_ID = 'albumid'
-    TRACK = 'track'
-
-
-class Op(enum.Enum):
-    IS = '='
-    MATCHES = '~'
-
-
-def like_escape(value):
-    if isinstance(value, str):
-        return re.sub(r'([\\_%])', r'\\\1', value)
-    else:
-        return value
+def fuzzy_like(value):
+    escaped = re.sub(r'([\\_%])', r'\\\1', value).replace(' ', '%')
+    return f'%{escaped}%'
 
 
 class Config(zdiscord.Config):
@@ -66,95 +37,89 @@ class SawanoBotCommands:
         self.logger = self.bot.logger
         self.db = BotDatabase()
 
-    async def parse_query(self, query):
-        self.logger.info(f'parse_query {query}')
-        items = []
-        what = query[0]
+        self.models = {}
+        self.query_grammars = {}
+        self.register_model(Album)
+        self.register_model(Track)
 
-        for part in query[1:]:
+    def register_model(self, model):
+        table = model_table(model)
+        grammar = tatsu.compile(QUERY_GRAMMAR)
+
+        for column in table.c:
+            grammar.rules[1].exp.options.append(tatsu.grammars.Token(column.name))
+
+        self.models[model.__tablename__] = model
+        self.query_grammars[model.__tablename__] = grammar
+
+    def q(self, *entities):
+        return self.db.session.query(*entities)
+
+    async def error(self, message, *, logged=None):
+        await self.bot.say(message)
+        self.logger.error(logged or message)
+
+    async def get_model(self, name):
+        self.logger.info(f'get_model {name}')
+        if not name.endswith('s'):
+            normalized = f'{name}s'
+
+        if normalized not in self.query_grammars:
+            await self.error(f'{name} is not something that can be queried.')
+            return None
+
+        return self.models[normalized]
+
+    async def parse_query(self, model, query):
+        self.logger.info(f'parse_query {query}')
+        criteria = []
+        grammar = self.query_grammars[model.__tablename__]
+
+        print(query)
+        for part in query:
             try:
-                kind, op, value = tatsu.parse(QUERY_GRAMMAR, part)
+                column_name, op, value = grammar.parse(part)
             except tatsu.exceptions.FailedParse as ex:
-                await self.bot.say(f'Invalid query: {ex.message}')
-                self.logger.error(f'FailedParse {str(ex)}')
+                await self.error(f'Invalid query: {ex.message}',
+                                 logged=f'FailedParse {str(ex)}')
                 return
             else:
-                part = QueryPart(Kind(kind), Op(op),
-                                 ''.join(value).replace('+', ' '))
+                column = getattr(model, column_name)
+                value = ''.join(value)
+                if op == '=':
+                    criteria.append(column == value)
+                elif op == '~':
+                    criteria.append(column.ilike(fuzzy_like(value)))
 
-                if part.kind == Kind.ALBUM_ID:
-                    try:
-                        part.value = int(part.value)
-                    except ValueError:
-                        await self.bot.say(
-                            f"{part.value} isn't a valid album id")
-                        self.logger.error(f'Bad integer {part.value}')
+        return criteria
 
-                items.append(part)
-
-        return Query(what, items)
-
-    async def run_query(self, query):
-        self.logger.info(f'run_query {query}')
-
-        where = []
-        for item in query.items:
-            if isinstance(item.value, str):
-                where.append(f'{item.kind.value} like ?')
-            else:
-                where.append(f'{item.kind.value} == ?')
-
-        if query.what == 'track':
-            table = 'tracks'
-        elif query.what == 'album':
-            table = 'albums'
-        else:
-            await self.bot.say(f'Invalid item to query: {query.what}')
-            self.logger.error(f'Invalid query item {query.what}')
-            return
-
-        items = []
-        for item in query.items:
-            if item.op == Op.MATCHES:
-                items.append(f'%{like_escape(item.value).replace(" ", "%")}%')
-            else:
-                items.append(like_escape(item.value))
-
-        self.logger.info(f'table: {table}, where: {where}, items: {items}')
-
-        results = self.db.cursor.execute(
-            f'SELECT * from {table} WHERE {" AND ".join(where)}', items)
-        return list(results)
-
-    async def show_query_results(self, query, results):
-        self.logger.info(f'show_query_results {query} {results}')
+    async def show_query_results(self, model, results):
+        self.logger.info(f'show_query_results {model} {results}')
         to_show = []
 
         for result in results:
-            if query.what == 'track':
-                name, album, albumid, vocal, lyricist, lyrics = result
+            if model is Track:
+                album = self.q(Album.name).filter_by(catalog=result.catalog).first()
+                assert album is not None
+                to_show.append({'Name': f'`{result.name}`', 'Album': album.name})
 
-                to_show.append({'Name': f'`{name}`', 'Album': album,
-                                'VGMdb album id': str(int(albumid))})
+                if result.vocalists is not None:
+                    to_show[-1]['Vocalist(s)'] = ', '.join(result.vocalists)
+                if result.lyricists is not None:
+                    to_show[-1]['Lyricist(s)'] = ', '.join(result.lyricists)
+                if result.lyrics is not None:
+                    to_show[-1]['Lyrics'] = '\n\n' + result.lyrics
+            elif model is Album:
+                tracks = self.q(Track.name).filter_by(catalog=result.catalog).all()
+                formatted_tracks = '\n'.join(f'- `{name}`' for name, in tracks)
+                url = f'https://vgmdb.net/album/{result.vgmdb_id}'
 
-                if vocal is not None:
-                    to_show[-1]['Vocalist(s)'] = vocal
-                if lyricist is not None:
-                    to_show[-1]['Lyricist(s)'] = lyricist
-                if lyrics is not None:
-                    to_show[-1]['Lyrics'] = '\n\n' + lyrics
-            elif query.what == 'album':
-                file, album, albumid = result
-
-                tracks = list(self.db.cursor.execute(
-                    f'SELECT track FROM tracks WHERE albumid = ?', (albumid,)))
-
-                to_show.append({'Name': album,
-                                'VGMdb album id': str(int(albumid)),
-                                'Tracks': '\n\n'+'\n'.join(
-                                    f'- `{track}`' for track, in tracks)})
+                to_show.append({'Name': result.name,
+                                'Catalog number': result.catalog,
+                                'VGMdb URL': url,
+                                'Tracks': '\n\n' + formatted_tracks})
             else:
-                assert 0, f'Bad query type to show {query.what}'
+                assert 0, f'Bad model to show {model}'
 
         self.logger.info(f'to_show {to_show}')
 
@@ -178,28 +143,22 @@ class SawanoBotCommands:
         Show information about Barricades:
         $track barricades
 
-        Show information about all tracks beginning with UNI:
+        Show information about all tracks containing UNI:
         $track UNI
 
-        Note that `$track name` is shorthand for `$query track name~name`.
+        Note that `$track <name>` is shorthand for `$query track name~<name>`.
         '''
         self.logger.info(f'track {args}')
 
-        if len(args) != 1:
+        if len(args) < 1:
             self.logger.info('track: bad args!')
             await self.bot.say(
                 f'WTH are you doing; this needs a track to search for')
             return
-        name = args[0]
+        name = ' '.join(args)
 
-        query = Query('track', [QueryPart(Kind.TRACK, Op.MATCHES, name)])
-
-        results = await self.run_query(query)
-        if results is None:
-            self.logger.error('Query run failed!')
-            return
-
-        await self.show_query_results(query, results)
+        results = self.q(Track).filter(Track.name.ilike(fuzzy_like(name))).all()
+        await self.show_query_results(Track, results)
 
     @zdiscord.safe_command
     async def query(self, *query):
@@ -232,17 +191,16 @@ class SawanoBotCommands:
         if len(query) < 2:
             return await self.bot.say(f'$query needs a query (duh)')
 
-        pquery = await self.parse_query(query)
-        if pquery is None:
-            self.logger.error('Query parsing failed!')
+        model = await self.get_model(query[0])
+        if model is None:
             return
 
-        results = await self.run_query(pquery)
-        if results is None:
-            self.logger.error('Query run failed!')
+        criteria = await self.parse_query(model, query[1:])
+        if criteria is None:
             return
 
-        await self.show_query_results(pquery, results)
+        results = self.q(model).filter(*criteria).all()
+        await self.show_query_results(model, results)
 
 
 class SawanoBot(zdiscord.Bot):
