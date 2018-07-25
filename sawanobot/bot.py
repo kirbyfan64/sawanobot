@@ -54,7 +54,7 @@ class SawanoBotCommands:
     def fields(self, model):
         fields = {column.name for column in model.__table__.c}
         if model is Album:
-            return (fields | {'catalog', 'tracks'}) - {'notes'}
+            return (fields | {'catalog', 'cover_art', 'tracks'}) - {'notes'}
         elif model is Track:
             return (fields | {'album', 'vocalists', 'lyricists'}) - {'lyrics'}
 
@@ -110,7 +110,6 @@ class SawanoBotCommands:
     def search_by_name(self, model_type, name):
         for bounded in True, False:
             fuzzy = fuzzy_like(name, bounded=bounded)
-            print(fuzzy)
             results = self.q(model_type).filter(model_type.name.ilike(fuzzy)).all()
             if results:
                 return results
@@ -134,8 +133,7 @@ class SawanoBotCommands:
                 if 'lyricists' in fields_to_show and result.lyricists:
                     info['Lyricist(s)'] = ', '.join(m.name for m in result.lyricists)
                 if 'lyrics' in fields_to_show and result.lyrics is not None:
-                    prefix = '\n' if info else ''
-                    info['Lyrics'] = prefix + result.lyrics
+                    info['Lyrics'] = '\n' + result.lyrics
             elif model is Album:
                 print('catalog' in fields_to_show)
                 if 'name' in fields_to_show:
@@ -144,10 +142,11 @@ class SawanoBotCommands:
                     info['Catalog number'] = result.catalog
                 if 'vgmdb_id' in fields_to_show:
                     info['VGMdb URL'] = f'https://vgmdb.net/album/{result.vgmdb_id}'
+                if 'cover_art' in fields_to_show:
+                    info['Cover art'] = ' '.join(result.cover_art)
                 if 'tracks' in fields_to_show:
-                    prefix = '\n' if info else ''
-                    info['Tracks'] = prefix + '\n'.join(f'- `{m.name}`'
-                                                        for m in result.tracks)
+                    info['Tracks'] = '\n' + '\n'.join(f'- `{m.name}`'
+                                                      for m in result.tracks)
                 if 'notes' in fields_to_show and result.notes:
                     info['Notes'] = result.notes
             else:

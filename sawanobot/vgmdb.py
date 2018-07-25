@@ -58,10 +58,10 @@ def fill_track_info(notes, track_map):
     current_track = None
 
     searchers = {
-        'Lyrics by ': 'lyricists',
-        'Lyrics: ': 'lyricists',
-        'Vocal by ': 'vocalists',
-        'Vocal: ': 'vocalists',
+        'lyrics by ': 'lyricists',
+        'lyrics: ': 'lyricists',
+        'vocal by ': 'vocalists',
+        'vocal: ': 'vocalists',
     }
 
     model_types = {
@@ -73,12 +73,13 @@ def fill_track_info(notes, track_map):
         if line.startswith('M') and line[1].isdigit():
             pos = upto(line, ' ')[1:]
             current_track = track_map[pos]
-        elif line.startswith('M-') and line[2].isdigit():
+        elif (line.startswith('M-') and line[2].isdigit()) or \
+             (line.startswith('TR') and line[2].isdigit()):
             pos = upto(line, ' ')[2:]
             current_track = track_map[f'1-{pos}']
         else:
             for prefix, target in searchers.items():
-                if line.startswith(prefix):
+                if line.lower().startswith(prefix):
                     names = line[len(prefix):].replace('&', ',').rstrip('.').split(',')
                     model_type = model_types[target]
                     setattr(current_track, target,

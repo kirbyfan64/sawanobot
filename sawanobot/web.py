@@ -116,6 +116,18 @@ class ImportView(BaseView, ViewAuthMixin):
 
             composer = db.default_composer
             extracted_album = vgmdb.extract_album_and_tracks(album_id, composer)
+
+            for track in extracted_album.tracks:
+                for attr in 'vocalists', 'lyricists':
+                    models = getattr(track, attr)
+                    model_type = getattr(Track, attr).property.argument
+
+                    for model in models:
+                        other = model_type.query.filter(
+                                    model_type.name.ilike(model.name)).first()
+                        if other is not None:
+                            model.name = other.name
+
             session[session_key] = extracted_album
 
             album, tracks = extracted_album
@@ -134,7 +146,7 @@ def format_length(view, context, model, column):
 
 class DataModelView(ModelView, ViewAuthMixin):
     column_hide_backrefs = False
-    column_exclude_list = ('notes', 'lyrics', 'info')
+    column_exclude_list = ('cover_art', 'notes', 'lyrics', 'info')
     column_formatters = {'catalog': macro('format_filters'),
                          'composer': macro('format_filters'),
                          'disc': macro('format_filters'),

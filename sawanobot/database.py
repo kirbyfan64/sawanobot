@@ -78,8 +78,6 @@ else:
             db.init_app(self.app)
 
         def initialize(self):
-            Model.metadata.drop_all(bind=db.engine, tables=[
-                tracks_vocalists, tracks_lyricists, Track.__table__, Album.__table__])
             db.create_all()
 
             self.user_role = Role.query.filter_by(name='user').first()
