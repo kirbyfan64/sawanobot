@@ -3,6 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import tatsu
+import sqlalchemy.sql.operators
 
 import zdiscord
 
@@ -52,6 +53,13 @@ class SawanoBotCommands:
         self.models[model.__tablename__] = model
         self.query_grammars[model.__tablename__] = grammar
 
+    def columns(self, model):
+        columns = {column.name for column in model_table(model).c}
+        if model is Album:
+            return columns - {'notes'}
+        elif model is Track:
+            return (columns | {'album'}) - {'lyrics'}
+
     def q(self, *entities):
         return self.db.session.query(*entities)
 
@@ -75,7 +83,6 @@ class SawanoBotCommands:
         criteria = []
         grammar = self.query_grammars[model.__tablename__]
 
-        print(query)
         for part in query:
             try:
                 column_name, op, value = grammar.parse(part)
@@ -86,40 +93,57 @@ class SawanoBotCommands:
             else:
                 column = getattr(model, column_name)
                 value = ''.join(value)
+
                 if op == '=':
-                    criteria.append(column == value)
+                    operator = sqlalchemy.sql.operators.eq
                 elif op == '~':
-                    criteria.append(column.ilike(fuzzy_like(value)))
+                    operator = sqlalchemy.sql.operators.ilike_op
+                    value = fuzzy_like(value)
+
+                if column_name in ('vocalists', 'lyricists'):
+                    criteria.append(column.any(value, operator=operator))
+                else:
+                    criteria.append(column.operate(operator, value))
 
         return criteria
 
-    async def show_query_results(self, model, results):
+    async def show_query_results(self, model, results, columns_to_show):
         self.logger.info(f'show_query_results {model} {results}')
         to_show = []
 
         for result in results:
+            info = {}
+
             if model is Track:
-                album = self.q(Album.name).filter_by(catalog=result.catalog).first()
-                assert album is not None
-                to_show.append({'Name': f'`{result.name}`', 'Album': album.name})
-
-                if result.vocalists is not None:
-                    to_show[-1]['Vocalist(s)'] = ', '.join(result.vocalists)
-                if result.lyricists is not None:
-                    to_show[-1]['Lyricist(s)'] = ', '.join(result.lyricists)
-                if result.lyrics is not None:
-                    to_show[-1]['Lyrics'] = '\n\n' + result.lyrics
+                if 'name' in columns_to_show:
+                    info['Name'] = result.name
+                if 'album' in columns_to_show:
+                    album = self.q(Album.name).filter_by(catalog=result.catalog).first()
+                    assert album is not None
+                    info['Album'] = album.name
+                if 'vocalists' in columns_to_show and result.vocalists is not None:
+                    info['Vocalist(s)'] = ', '.join(result.vocalists)
+                if 'lyricists' in columns_to_show and result.lyricists is not None:
+                    info['Lyricist(s)'] = ', '.join(result.lyricists)
+                if 'lyrics' in columns_to_show and result.lyrics is not None:
+                    info['Lyrics'] = '\n\n' + result.lyrics
             elif model is Album:
-                tracks = self.q(Track.name).filter_by(catalog=result.catalog).all()
-                formatted_tracks = '\n'.join(f'- `{name}`' for name, in tracks)
-                url = f'https://vgmdb.net/album/{result.vgmdb_id}'
-
-                to_show.append({'Name': result.name,
-                                'Catalog number': result.catalog,
-                                'VGMdb URL': url,
-                                'Tracks': '\n\n' + formatted_tracks})
+                if 'name' in columns_to_show:
+                    info['Name'] = result.name
+                if 'catalog 'in columns_to_show:
+                    info['Catalog number'] = result.catalog
+                if 'vgmdb_id' in columns_to_show:
+                    info['VGMdb URL'] = f'https://vgmdb.net/album/{result.vgmdb_id}'
+                if 'tracks 'in columns_to_show:
+                    prefix = '\n\n' if info else ''
+                    tracks = self.q(Track.name).filter_by(catalog=result.catalog).all()
+                    info['Tracks'] =  '\n'.join(f'- `{name}`' for name, in tracks)
+                if 'notes' in columns_to_show and result.notes:
+                    info['Notes'] = result.notes
             else:
                 assert 0, f'Bad model to show {model}'
+
+            to_show.append(info)
 
         self.logger.info(f'to_show {to_show}')
 
@@ -146,7 +170,7 @@ class SawanoBotCommands:
         Show information about all tracks containing UNI:
         $track UNI
 
-        Note that `$track <name>` is shorthand for `$query track name~<name>`.
+        Note that `$track <name>` is shorthand for `$query track name~<name> :- lyrics`.
         '''
         self.logger.info(f'track {args}')
 
@@ -158,7 +182,7 @@ class SawanoBotCommands:
         name = ' '.join(args)
 
         results = self.q(Track).filter(Track.name.ilike(fuzzy_like(name))).all()
-        await self.show_query_results(Track, results)
+        await self.show_query_results(Track, results, self.columns(Track))
 
     @zdiscord.safe_command
     async def query(self, *query):
@@ -170,9 +194,9 @@ class SawanoBotCommands:
         Query all tracks with mpi doing vocals:
         $query track vocal=mpi
 
-        Query all track with mpi *and* Mika Kobayashi doing vocals (the "+" is a
-        stand-in for a space):
-        $query track vocal=mpi vocal=mika+kobayashi
+        Query all track with mpi *and* Mika Kobayashi doing vocals (quotes are used
+        because of the space in the name):
+        $query track vocalists~mpi "vocalists~mika kobayashi"
 
         Tracks with mpi doing lyrics and Cyua singing in the Unicorn OST (the
         "~" means "contains"):
@@ -200,7 +224,7 @@ class SawanoBotCommands:
             return
 
         results = self.q(model).filter(*criteria).all()
-        await self.show_query_results(model, results)
+        await self.show_query_results(model, results, self.columns(model))
 
 
 class SawanoBot(zdiscord.Bot):

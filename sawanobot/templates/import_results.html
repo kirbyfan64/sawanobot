@@ -48,16 +48,12 @@
               <td>{{ track.meaning }}</td>
             </tr>
             <tr>
-              <td>Composer</td>
-              <td>{{ track.composer }}</td>
-            </tr>
-            <tr>
               <td>Vocalists</td>
-              <td>{{ ','.join(track.vocalists or ['None']) }}</td>
+              <td>{{ track.vocalists | format_model_list }}</td>
             </tr>
             <tr>
               <td>Lyricists</td>
-              <td>{{ ','.join(track.lyricists or ['None']) }}</td>
+              <td>{{ track.lyricists | format_model_list }}</td>
             </tr>
             <tr style="height: 2em">
               <td colspan="2"></td>

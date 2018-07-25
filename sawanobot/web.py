@@ -18,16 +18,11 @@ from wtforms import Form, StringField, SubmitField, TextAreaField, ValidationErr
 from . import Config
 Config.current = Config.WEB
 
-from .database import Album, Track, Role, User, WebDatabase, migrate, user_datastore
+from .database import Album, Track, Composer, Vocalist, Lyricist, Role, User, \
+                      WebDatabase, migrate, user_datastore
 from . import vgmdb
 
 import os
-
-
-class DefaultComposerField(StringField):
-    def __init__(self, *args, **kw):
-        super(DefaultComposerField, self).__init__(
-            default=app.config['DEFAULT_COMPOSER'], *args, **kw)
 
 
 class DefaultPasswordField(StringField):
@@ -108,9 +103,10 @@ class ImportView(BaseView, ViewAuthMixin):
 
             if request.method == 'POST':
                 if session_key in session:
-                    album, tracks = session[session_key]
-                    db.add_album_and_tracks(album, tracks)
-                    return redirect(url_for('album.edit_view', id=album.catalog))
+                    extracted_album = session[session_key]
+                    db.add_extracted_album(extracted_album)
+                    return redirect(url_for('album.edit_view',
+                                            id=extracted_album.album.catalog))
                 else:
                     abort(400)
 
@@ -118,9 +114,11 @@ class ImportView(BaseView, ViewAuthMixin):
             if album_id is None:
                 abort(400)
 
-            album, tracks = vgmdb.extract_album_and_tracks(album_id)
-            session[session_key] = (album, tracks)
+            composer = db.default_composer
+            extracted_album = vgmdb.extract_album_and_tracks(album_id, composer)
+            session[session_key] = extracted_album
 
+            album, tracks = extracted_album
             return self.render('import_results.html', album=album, tracks=tracks,
                                form=form, album_url=album_url)
         else:
@@ -135,6 +133,7 @@ def format_length(view, context, model, column):
 
 
 class DataModelView(ModelView, ViewAuthMixin):
+    column_hide_backrefs = False
     column_exclude_list = ('notes', 'lyrics', 'info')
     column_formatters = {'catalog': macro('format_filters'),
                          'composer': macro('format_filters'),
@@ -142,16 +141,29 @@ class DataModelView(ModelView, ViewAuthMixin):
                          'length': format_length}
     column_labels = {'catalog': 'Catalog number', 'vgmdb_id': 'VGMdb id',
                      'id': 'Unique ID'}
-    form_overrides = {'composer': DefaultComposerField, 'lyrics': TallTextAreaField}
+    form_overrides = {'lyrics': TallTextAreaField, 'notes': TallTextAreaField}
     list_template = 'admin/list_filtered.html'
 
     def __init__(self, model, session):
         table = model.metadata.tables[model.__tablename__]
         self.column_list = []
         self.form_columns = []
+
         for column in table.c:
-            self.column_list.append(column.name)
-            self.form_columns.append(column.name)
+            if model is Track and column.name == 'catalog':
+                self.column_list.append(column.name)
+                self.column_list.append('album')
+                self.form_columns.append('album')
+            elif model is Track and column.name == 'composer_name':
+                self.column_list.append('composer_name')
+                self.form_columns.append('composer')
+            elif column.name != 'id':
+                self.column_list.append(column.name)
+                self.form_columns.append(column.name)
+
+        if model is Track:
+            self.form_columns.append('vocalists')
+            self.form_columns.append('lyricists')
 
         super(DataModelView, self).__init__(model, session)
         self.superuser = False
@@ -231,6 +243,9 @@ admin = Admin(app, name='sawanobot', template_mode='bootstrap3',
               base_template='admin/master.html')
 admin.add_view(DataModelView(Album, db.session))
 admin.add_view(DataModelView(Track, db.session))
+admin.add_view(DataModelView(Composer, db.session))
+admin.add_view(DataModelView(Vocalist, db.session))
+admin.add_view(DataModelView(Lyricist, db.session))
 admin.add_view(RestrictedModelView(Role, db.session))
 admin.add_view(RestrictedModelView(User, db.session, exclude=['password']))
 admin.add_view(ImportView())
@@ -243,6 +258,11 @@ admin.add_view(SecurityRedirectView('Change password', 'change_password',
 @app.route('/')
 def index():
     return redirect(url_for('admin.index'))
+
+
+@app.template_filter()
+def format_model_list(models):
+    return ', '.join([model.name for model in models] or ['None'])
 
 
 with app.app_context():

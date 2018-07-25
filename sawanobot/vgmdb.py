@@ -3,11 +3,15 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
+from collections import namedtuple
 import contextlib
 import json
 import urllib.request
 
-from .database import Album, Track
+from .database import Album, Track, Vocalist, Lyricist
+
+
+ExtractedAlbum = namedtuple('ExtractedAlbum', ['album', 'tracks'])
 
 
 def extract_album_id(url):
@@ -54,10 +58,15 @@ def fill_track_info(notes, track_map):
     current_track = None
 
     searchers = {
-        'Lyrics by ': 'lyricist',
-        'Lyrics: ': 'lyricist',
-        'Vocal by ': 'vocal',
-        'Vocal: ': 'vocal',
+        'Lyrics by ': 'lyricists',
+        'Lyrics: ': 'lyricists',
+        'Vocal by ': 'vocalists',
+        'Vocal: ': 'vocalists',
+    }
+
+    model_types = {
+        'vocalists': Vocalist,
+        'lyricists': Lyricist,
     }
 
     for line in notes.splitlines():
@@ -70,12 +79,14 @@ def fill_track_info(notes, track_map):
         else:
             for prefix, target in searchers.items():
                 if line.startswith(prefix):
-                    value = line[len(prefix):].replace(' & ', ', ').rstrip('.')
-                    setattr(current_track, target, value)
+                    names = line[len(prefix):].replace('&', ',').rstrip('.').split(',')
+                    model_type = model_types[target]
+                    setattr(current_track, target,
+                            [model_type(name=name.strip()) for name in names])
                     break
 
 
-def extract_album_and_tracks(album_id):
+def extract_album_and_tracks(album_id, composer):
     LANGUAGES = 'Japanese', 'Greek', 'English'
 
     with vgmdb_info(f'album/{album_id}') as data:
@@ -101,10 +112,10 @@ def extract_album_and_tracks(album_id):
 
                 track = Track(catalog=catalog, disc=disc_id, track=track_id,
                               name=name, length=length, meaning=meaning,
-                              composer=data['composers'][0]['names']['en'])
+                              composer=composer, composer_name=composer.name)
                 tracks.append(track)
                 track_map[f'{disc_id}-{track_id:>02}'] = track
 
         fill_track_info(notes, track_map)
 
-        return album, tracks
+        return ExtractedAlbum(album, tracks)
