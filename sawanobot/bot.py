@@ -12,20 +12,19 @@ from pathlib import Path
 
 from . import Config
 Config.current = Config.BOT
-from .database import BotDatabase, Model, Album, Track, model_table
+from .database import BotDatabase, Model, Album, Track
 
 
 QUERY_GRAMMAR = '''
 start = kind op value $ ;
 kind = 'catalog' | 'name' ;
-op = '=' | '~' ;
+op = '=' | '~=' | '~' ;
 value =  { /[^:]/ }+ ;
 '''
 
-
-def fuzzy_like(value):
+def fuzzy_like(value, *, bounded=False):
     escaped = re.sub(r'([\\_%])', r'\\\1', value).replace(' ', '%')
-    return f'%{escaped}%'
+    return f'%{escaped}%' if not bounded else escaped
 
 
 class Config(zdiscord.Config):
@@ -41,24 +40,23 @@ class SawanoBotCommands:
         self.models = {}
         self.query_grammars = {}
         self.register_model(Album)
-        self.register_model(Track)
+        self.register_model(Track, extra_fields=['vocalists', 'lyricists'])
 
-    def register_model(self, model):
-        table = model_table(model)
+    def register_model(self, model, *, extra_fields=[]):
         grammar = tatsu.compile(QUERY_GRAMMAR)
 
-        for column in table.c:
-            grammar.rules[1].exp.options.append(tatsu.grammars.Token(column.name))
+        for field in [column.name for column in model.__table__.c] + extra_fields:
+            grammar.rules[1].exp.options.append(tatsu.grammars.Token(field))
 
         self.models[model.__tablename__] = model
         self.query_grammars[model.__tablename__] = grammar
 
-    def columns(self, model):
-        columns = {column.name for column in model_table(model).c}
+    def fields(self, model):
+        fields = {column.name for column in model.__table__.c}
         if model is Album:
-            return columns - {'notes'}
+            return (fields | {'catalog', 'tracks'}) - {'notes'}
         elif model is Track:
-            return (columns | {'album'}) - {'lyrics'}
+            return (fields | {'album', 'vocalists', 'lyricists'}) - {'lyrics'}
 
     def q(self, *entities):
         return self.db.session.query(*entities)
@@ -96,18 +94,30 @@ class SawanoBotCommands:
 
                 if op == '=':
                     operator = sqlalchemy.sql.operators.eq
-                elif op == '~':
+                elif op in ('~', '~='):
                     operator = sqlalchemy.sql.operators.ilike_op
-                    value = fuzzy_like(value)
+                    is_bounded = op == '~='
+                    value = fuzzy_like(value, bounded=is_bounded)
 
                 if column_name in ('vocalists', 'lyricists'):
-                    criteria.append(column.any(value, operator=operator))
+                    related = column.property.argument
+                    criteria.append(column.any(related.name.operate(operator, value)))
                 else:
                     criteria.append(column.operate(operator, value))
 
         return criteria
 
-    async def show_query_results(self, model, results, columns_to_show):
+    def search_by_name(self, model_type, name):
+        for bounded in True, False:
+            fuzzy = fuzzy_like(name, bounded=bounded)
+            print(fuzzy)
+            results = self.q(model_type).filter(model_type.name.ilike(fuzzy)).all()
+            if results:
+                return results
+
+        return []
+
+    async def show_query_results(self, model, results, fields_to_show):
         self.logger.info(f'show_query_results {model} {results}')
         to_show = []
 
@@ -115,30 +125,30 @@ class SawanoBotCommands:
             info = {}
 
             if model is Track:
-                if 'name' in columns_to_show:
+                if 'name' in fields_to_show:
                     info['Name'] = result.name
-                if 'album' in columns_to_show:
-                    album = self.q(Album.name).filter_by(catalog=result.catalog).first()
-                    assert album is not None
-                    info['Album'] = album.name
-                if 'vocalists' in columns_to_show and result.vocalists is not None:
-                    info['Vocalist(s)'] = ', '.join(result.vocalists)
-                if 'lyricists' in columns_to_show and result.lyricists is not None:
-                    info['Lyricist(s)'] = ', '.join(result.lyricists)
-                if 'lyrics' in columns_to_show and result.lyrics is not None:
-                    info['Lyrics'] = '\n\n' + result.lyrics
+                if 'album' in fields_to_show:
+                    info['Album'] = result.album.name
+                if 'vocalists' in fields_to_show and result.vocalists:
+                    info['Vocalist(s)'] = ', '.join(m.name for m in result.vocalists)
+                if 'lyricists' in fields_to_show and result.lyricists:
+                    info['Lyricist(s)'] = ', '.join(m.name for m in result.lyricists)
+                if 'lyrics' in fields_to_show and result.lyrics is not None:
+                    prefix = '\n' if info else ''
+                    info['Lyrics'] = prefix + result.lyrics
             elif model is Album:
-                if 'name' in columns_to_show:
+                print('catalog' in fields_to_show)
+                if 'name' in fields_to_show:
                     info['Name'] = result.name
-                if 'catalog 'in columns_to_show:
+                if 'catalog' in fields_to_show:
                     info['Catalog number'] = result.catalog
-                if 'vgmdb_id' in columns_to_show:
+                if 'vgmdb_id' in fields_to_show:
                     info['VGMdb URL'] = f'https://vgmdb.net/album/{result.vgmdb_id}'
-                if 'tracks 'in columns_to_show:
-                    prefix = '\n\n' if info else ''
-                    tracks = self.q(Track.name).filter_by(catalog=result.catalog).all()
-                    info['Tracks'] =  '\n'.join(f'- `{name}`' for name, in tracks)
-                if 'notes' in columns_to_show and result.notes:
+                if 'tracks' in fields_to_show:
+                    prefix = '\n' if info else ''
+                    info['Tracks'] = prefix + '\n'.join(f'- `{m.name}`'
+                                                        for m in result.tracks)
+                if 'notes' in fields_to_show and result.notes:
                     info['Notes'] = result.notes
             else:
                 assert 0, f'Bad model to show {model}'
@@ -152,15 +162,43 @@ class SawanoBotCommands:
         for item in to_show:
             message = []
 
-            for key, value in item.items():
-                message.append(f'**{key}:** {value}')
+            if not item:
+                continue
+            elif len(item) == 1:
+                message.append(next(iter(item.values())))
+            else:
+                for key, value in item.items():
+                    message.append(f'**{key}:** {value}')
 
             await self.bot.say('\n'.join(message))
 
     @zdiscord.safe_command
+    async def album(self, *args):
+        '''
+        Prints information about the given album.
+
+        Example usage:
+
+        Show information about Binary Star / Cage:
+        $album binary star cage
+
+        Note that `$album <name>` is shorthand for `$query album name~<name>`.
+        '''
+        self.logger.info(f'album {args}')
+
+        if len(args) < 1:
+            self.logger.info('album: bad args!')
+            await self.bot.say('This needs an album` to search for.')
+            return
+
+        name = ' '.join(args)
+        results = self.search_by_name(Album, name)
+        await self.show_query_results(Album, results, self.fields(Album))
+
+    @zdiscord.safe_command
     async def track(self, *args):
         '''
-        Prints information on the given track.
+        Prints information about the given track.
 
         Example usage:
 
@@ -170,19 +208,34 @@ class SawanoBotCommands:
         Show information about all tracks containing UNI:
         $track UNI
 
-        Note that `$track <name>` is shorthand for `$query track name~<name> :- lyrics`.
+        Note that `$track <name>` is shorthand for `$query track name~<name>`.
         '''
         self.logger.info(f'track {args}')
 
         if len(args) < 1:
             self.logger.info('track: bad args!')
-            await self.bot.say(
-                f'WTH are you doing; this needs a track to search for')
+            await self.bot.say('This needs a track to search for.')
             return
-        name = ' '.join(args)
 
-        results = self.q(Track).filter(Track.name.ilike(fuzzy_like(name))).all()
-        await self.show_query_results(Track, results, self.columns(Track))
+        name = ' '.join(args)
+        results = self.search_by_name(Track, name)
+        await self.show_query_results(Track, results, self.fields(Track))
+
+    @zdiscord.safe_command
+    async def lyrics(self, *args):
+        '''
+        Prints the given track's lyrics.
+        '''
+        self.logger.info(f'lyrics {args}')
+
+        if len(args) < 1:
+            self.logger.info('lyrics: bad args!')
+            await self.bot.say('This needs a track to search for.')
+            return
+
+        name = ' '.join(args)
+        results = self.search_by_name(Track, name)
+        await self.show_query_results(Track, results, {'lyrics'})
 
     @zdiscord.safe_command
     async def query(self, *query):
@@ -211,20 +264,37 @@ class SawanoBotCommands:
         $query track lyricist=mpi : name lyrics
         '''
 
+        query = list(query)
+
         self.logger.info(f'$query: {query}')
         if len(query) < 2:
             return await self.bot.say(f'$query needs a query (duh)')
 
-        model = await self.get_model(query[0])
+        model = await self.get_model(query.pop(0))
         if model is None:
             return
 
-        criteria = await self.parse_query(model, query[1:])
+        fields = self.fields(model)
+
+        for formatter in ':', ':-':
+            if formatter in query:
+                index = query.index(formatter)
+                requested_fields = set(query[index+1:])
+                query = query[:index]
+
+                if formatter == ':':
+                    fields = set(requested_fields)
+                elif formatter == ':-':
+                    fields -= set(requested_fields)
+
+                break
+
+        criteria = await self.parse_query(model, query)
         if criteria is None:
             return
 
         results = self.q(model).filter(*criteria).all()
-        await self.show_query_results(model, results, self.columns(model))
+        await self.show_query_results(model, results, fields)
 
 
 class SawanoBot(zdiscord.Bot):

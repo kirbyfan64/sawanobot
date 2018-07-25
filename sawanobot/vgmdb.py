@@ -94,7 +94,8 @@ def extract_album_and_tracks(album_id, composer):
         tracks = []
         catalog = data['catalog']
         notes = data['notes']
-        album = Album(catalog=catalog, vgmdb_id=album_id, name=data['name'], notes=notes)
+        album = Album(catalog=catalog, cover_art=[], vgmdb_id=album_id,
+                      name=data['name'], notes=notes)
 
         for disc_id, disc_data in enumerate(data['discs'], start=1):
             for track_id, track_data in enumerate(disc_data['tracks'], start=1):

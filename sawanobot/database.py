@@ -8,7 +8,8 @@ from . import Config
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import backref, relationship, sessionmaker
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table
+from sqlalchemy import ARRAY, Boolean, Column, DateTime, ForeignKey, Integer, String, \
+                              Table
 
 import os
 
@@ -29,42 +30,6 @@ class Database:
         self.session.commit()
 
         track_map = {(track.disc, track.track): track for track in tracks}
-        adding = {'vocalists': {}, 'lyricists': {}}
-
-        # for track in tracks:
-        #     attrs = {'vocalists': Vocalist, 'lyricists': Lyricist}
-
-        #     for attr, model_type in attrs.items():
-        #         models = getattr(track, attr)
-
-        #         for i, model in enumerate(models):
-        #             name = model.name
-
-        #             print(f'checking for {name}')
-        #             present = self.session.query(model_type).filter_by(name=name).first()
-        #             if present is None:
-        #                 #     adding[attr].add(name)
-        #                 print(f'{name} is being added')
-        #                 self.session.add(model)
-        #                 present = model
-        #                 # if name in adding[attr]:
-        #                 #     print(f'{name} from adding[{attr}]')
-        #                 #     present = adding[attr][name]
-        #                 # else:
-        #                 #     print(f'{name} is new')
-        #                 #     self.session.add(model)
-        #                 #     adding[attr][name] = model
-        #                 #     continue
-        #             else:
-        #                 print(f'{name} is present')
-
-        #             models[i] = present
-
-        # present_tracks = self.session.query(Track).filter_by(catalog=album.catalog).all()
-        # for present_track in present_tracks:
-        #     track = track_map.pop((present_track.disc, present_track.track))
-        #     track.id = present_track.id
-        #     self.session.merge(track)
 
         for track in tracks:
             present = self.session.query(Track).filter_by(catalog=track.catalog,
@@ -74,7 +39,6 @@ class Database:
                 track.id = present.id
             self.session.merge(track)
 
-        # self.session.add_all(track_map.values())
         self.session.commit()
 
 
@@ -114,8 +78,8 @@ else:
             db.init_app(self.app)
 
         def initialize(self):
-            # Model.metadata.drop_all(bind=db.engine, tables=[
-                # tracks_vocalists, tracks_lyricists, Track.__table__, Album.__table__])
+            Model.metadata.drop_all(bind=db.engine, tables=[
+                tracks_vocalists, tracks_lyricists, Track.__table__, Album.__table__])
             db.create_all()
 
             self.user_role = Role.query.filter_by(name='user').first()
@@ -207,6 +171,7 @@ class Album(Model):
     __tablename__ = 'albums'
 
     catalog = Column(String, primary_key=True, nullable=False)
+    cover_art = Column(ARRAY(String))
     vgmdb_id = Column(String, nullable=False, unique=True)
     name = Column(String, nullable=False, unique=True)
     notes = Column(String)
@@ -239,7 +204,3 @@ class Track(Model):
 
     def __repr__(self):
         return self.name
-
-
-def model_table(model):
-    return model.metadata.tables[model.__tablename__]
